@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,6 +23,8 @@ USAGE
     scaneo [options] paths...
 
 OPTIONS
+    -s, -source
+        Generated file.
     -o, -output
         Set the name of the generated file. Default is scans.go.
 
@@ -80,13 +83,15 @@ type structToken struct {
 func main() {
 	log.SetFlags(0)
 
-	outFilename := flag.String("o", "scans.go", "")
+	sourceFilename := flag.String("s", "", "")
+	outFilename := flag.String("o", "", "")
 	packName := flag.String("p", "current directory", "")
 	unexport := flag.Bool("u", false, "")
 	whitelist := flag.String("w", "", "")
 	version := flag.Bool("v", false, "")
 	help := flag.Bool("h", false, "")
-	flag.StringVar(outFilename, "output", "scans.go", "")
+	flag.StringVar(sourceFilename, "source", "", "")
+	flag.StringVar(outFilename, "output", "", "")
 	flag.StringVar(packName, "package", "current directory", "")
 	flag.BoolVar(unexport, "unexport", false, "")
 	flag.StringVar(whitelist, "whitelist", "", "")
@@ -116,21 +121,27 @@ func main() {
 		*packName = filepath.Base(wd)
 	}
 
-	files, err := findFiles(flag.Args())
-	if err != nil {
-		log.Println("couldn't find files:", err)
-		log.Fatal(usageText)
-	}
+	// files, err := findFiles(flag.Args())
+	// if err != nil {
+	// 	log.Println("couldn't find files:", err)
+	// 	log.Fatal(usageText)
+	// }
 
 	structToks := make([]structToken, 0, 8)
-	for _, file := range files {
-		toks, err := parseCode(file, *whitelist)
-		if err != nil {
-			log.Println(`"syntax error" - parser probably`)
-			log.Fatal(err)
-		}
+	// for _, file := range files {
+	toks, err := parseCode(*sourceFilename, *whitelist)
+	if err != nil {
+		log.Println(`"syntax error" - parser probably`)
+		log.Fatal(err)
+	}
 
-		structToks = append(structToks, toks...)
+	structToks = append(structToks, toks...)
+	// }
+
+	if *outFilename == "" {
+		name := filepath.Ext(*sourceFilename)
+		*outFilename = strings.Replace(*sourceFilename, name, "", 1) + ".scan.go"
+		log.Println("[scangen]", *sourceFilename, *outFilename)
 	}
 
 	if err := genFile(*outFilename, *packName, *unexport, structToks); err != nil {
@@ -204,7 +215,7 @@ func parseCode(source string, commaList string) ([]structToken, error) {
 		filter = true
 	}
 
-	//ast.Print(fset, astf)
+	// ast.Print(fset, astf)
 	for _, decl := range astf.Decls {
 		genDecl, isGeneralDeclaration := decl.(*ast.GenDecl)
 		if !isGeneralDeclaration {
@@ -341,6 +352,9 @@ func parseStar(fieldType *ast.StarExpr) string {
 	return fmt.Sprintf("*%s", starType)
 }
 
+//go:embed tmpl.gohtml
+var tmpl string
+
 func genFile(outFile, pkg string, unexport bool, toks []structToken) error {
 	if len(toks) < 1 {
 		return errors.New("no structs found")
@@ -367,8 +381,8 @@ func genFile(outFile, pkg string, unexport bool, toks []structToken) error {
 		data.Visibility = "s"
 	}
 
-	fnMap := template.FuncMap{"title": strings.Title}
-	scansTmpl, err := template.New("scans").Funcs(fnMap).Parse(scansText)
+	fnMap := template.FuncMap{}
+	scansTmpl, err := template.New("scans").Funcs(fnMap).Parse(tmpl)
 	if err != nil {
 		return err
 	}
